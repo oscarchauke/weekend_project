@@ -43,6 +43,7 @@ typedef enum comms_state_t
 enum PACKET_IDENTIFIERS{
 	CONSOLE_LOG,
 	COMMS_PACKET,
+	SYSTEM_COMMAND_PACKET,
 	HARDWARE_COMMAND_PACKET,
 	SENSOR_DATA_PACKET,
 };
@@ -65,6 +66,8 @@ typedef struct comms_t{
 void comms_init(UART_HandleTypeDef *huart);
 void comms_state_machine();
 void comms_send_packet(comms_packet_t *packet);
+
+void comms_create_packet(comms_packet_t *packet, uint8_t packet_identifier, uint8_t data_length, uint8_t data[PACKET_DATA_MAX_LENGTH]);
 
 comms_packet_t comms_buffer_read();
 uint8_t comms_buffer_is_full();

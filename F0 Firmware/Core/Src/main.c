@@ -44,6 +44,8 @@
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc;
 
+RTC_HandleTypeDef hrtc;
+
 TIM_HandleTypeDef htim6;
 
 UART_HandleTypeDef huart2;
@@ -60,6 +62,7 @@ static void MX_GPIO_Init(void);
 static void MX_TIM6_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_ADC_Init(void);
+static void MX_RTC_Init(void);
 void StartDefaultTask(void const * argument);
 void StartCommsTask(void const * argument);
 
@@ -142,6 +145,7 @@ int main(void)
   MX_TIM6_Init();
   MX_USART2_UART_Init();
   MX_ADC_Init();
+  MX_RTC_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_Base_Start(&htim6);
 
@@ -202,15 +206,18 @@ void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+  RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_HSI14;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_HSI14
+                              |RCC_OSCILLATORTYPE_LSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSI14State = RCC_HSI14_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.HSI14CalibrationValue = 16;
+  RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
   RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL12;
@@ -229,6 +236,12 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
 
   if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_RTC;
+  PeriphClkInit.RTCClockSelection = RCC_RTCCLKSOURCE_LSI;
+  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();
   }
@@ -285,6 +298,41 @@ static void MX_ADC_Init(void)
   /* USER CODE BEGIN ADC_Init 2 */
 
   /* USER CODE END ADC_Init 2 */
+
+}
+
+/**
+  * @brief RTC Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_RTC_Init(void)
+{
+
+  /* USER CODE BEGIN RTC_Init 0 */
+
+  /* USER CODE END RTC_Init 0 */
+
+  /* USER CODE BEGIN RTC_Init 1 */
+
+  /* USER CODE END RTC_Init 1 */
+
+  /** Initialize RTC Only
+  */
+  hrtc.Instance = RTC;
+  hrtc.Init.HourFormat = RTC_HOURFORMAT_24;
+  hrtc.Init.AsynchPrediv = 127;
+  hrtc.Init.SynchPrediv = 255;
+  hrtc.Init.OutPut = RTC_OUTPUT_DISABLE;
+  hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
+  hrtc.Init.OutPutType = RTC_OUTPUT_TYPE_OPENDRAIN;
+  if (HAL_RTC_Init(&hrtc) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN RTC_Init 2 */
+
+  /* USER CODE END RTC_Init 2 */
 
 }
 
@@ -440,12 +488,18 @@ void StartCommsTask(void const * argument)
   /* USER CODE BEGIN StartCommsTask */
 	comms_init(&huart2);
 	HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin, 1);
+	uint8_t data[2] = {10, 0};
+	comms_packet_t packet;
+	comms_create_packet(&packet, SYSTEM_COMMAND_PACKET, 1, data);
+	comms_send_packet(&packet);
   /* Infinite loop */
   for(;;)
   {
 	  comms_state_machine();
 	  if(!comms_buffer_is_empty()){
 		  HAL_GPIO_WritePin(LD4_GPIO_Port, LD4_Pin, 1);
+		  packet = comms_buffer_read();
+		  osDelay(1000);
 	  }
   }
   /* USER CODE END StartCommsTask */

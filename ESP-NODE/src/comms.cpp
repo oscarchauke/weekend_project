@@ -14,6 +14,7 @@
 #define MODULE_NAME "COMMS"
 
 static comms_t comms;
+uint8_t retries = 0;
 
 comms_packet_t temporary_packet;
 comms_packet_t previous_packet;
@@ -22,13 +23,19 @@ static comms_packet_t retransmit_packet = {
     .identifier = 0,
     .length = 1,
     .data = {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-    .crc = 0X12};
+    .crc = 0x12};
 
 static comms_packet_t acknowledge_packet = {
     .identifier = 0,
     .length = 1,
     .data = {0},
-    .crc = 0X15};
+    .crc = 0x15};
+
+static comms_packet_t give_up_packet = {
+    .identifier = 0,
+    .length = 1,
+    .data = {255},
+    .crc = 0xE6};
 
 // TODO: Find a way to test if the buffer is working correctly
 static void comms_buffer_write(comms_packet_t packet);
@@ -48,21 +55,21 @@ void comms_init()
     comms.buffer = rb;
 }
 
-uint8_t is_ack_packet(comms_packet_t *packet){
-	if(packet->identifier != 0){
-		return 0;
-	}
-
-	if(packet->length != 1){
-		return 0;
-	}
-
-	if(packet->data[0] != 0){
-		return 0;
-	}
-
-	return 1;
+uint8_t is_ack_packet(comms_packet_t *packet)
+{
+    return (packet->identifier == 0 && packet->length == 1 && packet->data[0] == 0);
 }
+
+uint8_t is_ret_packet(comms_packet_t *packet)
+{
+    return (packet->identifier == 0 && packet->length == 1 && packet->data[0] == 1);
+}
+
+uint8_t is_give_up_packet(comms_packet_t *packet)
+{
+    return (packet->identifier == 0 && packet->length == 1 && packet->data[0] == 255);
+}
+
 // TODO: UART receive error handing
 void comms_state_machine()
 {
@@ -99,24 +106,44 @@ void comms_state_machine()
         if (Serial2.available() >= 1)
         {
             temporary_packet.crc = Serial2.read();
-
             // Check CRC8
-            uint8_t crc = crc8((uint8_t *)&temporary_packet, (temporary_packet.length + 2)); // Calculate CRC over identifier, length, and data
+            uint8_t crc = crc8((uint8_t *)&temporary_packet, (temporary_packet.length + 2)); // Add 2 to the data length to accommodate the identifier byte and length byte
             if (crc == temporary_packet.crc)
             {
-                // Packet valid
-                if(!is_ack_packet(&temporary_packet)){
-                    comms_buffer_write(temporary_packet);
-                    comms_send_packet(&acknowledge_packet);
+                // packet valid
+                Serial.println("Packet is valid");
+                if (is_ret_packet(&temporary_packet))
+                {
+                    if (retries < 5)
+                    {
+                        comms_send_packet(&previous_packet);
+                        retries = retries + 1;
+                    }
+                    else
+                    {
+                        comms_send_packet(&give_up_packet);
+                        retries = 0;
+                    }
+                    comms.state = COMMS_ID_STATE;
+                    break;
                 }
 
+                if (is_ack_packet(&temporary_packet))
+                {
+                    comms.state = COMMS_ID_STATE;
+                    break;
+                }
+
+                comms_buffer_write(temporary_packet);
+                comms_send_packet(&acknowledge_packet);
+                comms.state = COMMS_ID_STATE;
+                break;
             }
             else
             {
-                // Packet invalid, request retransmission
+                // packet invalid request a retransmit
                 comms_send_packet(&retransmit_packet);
             }
-
             comms.state = COMMS_ID_STATE;
         }
         break;
@@ -136,16 +163,22 @@ void comms_send_packet(comms_packet_t *packet)
         Serial2.write(&(packet->data[i]), 1);
     }
     Serial2.write(&(packet->crc), 1);
+    // TODO: Question this decision
+    if (!is_ret_packet(packet))
+    {
+        memcpy(&previous_packet, packet, sizeof(comms_packet_t));
+    }
 }
 
-void comms_create_packet(comms_packet_t *packet, PACKET_IDENTIFIERS packet_identifier, uint8_t data_length, uint8_t data[PACKET_DATA_MAX_LENGTH]){
+void comms_create_packet(comms_packet_t *packet, PACKET_IDENTIFIERS packet_identifier, uint8_t data_length, uint8_t data[PACKET_DATA_MAX_LENGTH])
+{
     packet->identifier = packet_identifier;
     packet->length = data_length;
-    for(int i =0; i < data_length; i++){
+    for (int i = 0; i < data_length; i++)
+    {
         packet->data[i] = data[i];
     }
-    packet->crc = crc8((uint8_t*)packet, (data_length + 2));
-    comms_send_packet(packet);
+    packet->crc = crc8((uint8_t *)packet, (data_length + 2));
 }
 
 // TODO: Find a better way of doing this or delete once the comms module is fully functional
@@ -203,9 +236,10 @@ comms_packet_t comms_buffer_read()
         return packet; // Buffer is empty
     }
 
+    // Read the packet from the buffer
     packet = comms.buffer->buffer[comms.buffer->tail];
     comms.buffer->tail = (comms.buffer->tail + 1) % COMMS_BUFFER_CAPACITY;
-    comms.buffer->size++;
+    comms.buffer->size--; // Decrease the buffer size since we're removing a packet
     return packet;
 }
 
