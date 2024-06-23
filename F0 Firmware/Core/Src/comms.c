@@ -9,15 +9,12 @@
 
 #include <string.h>
 
-#define COMMS_BUFFER_CAPACITY (10)
-
-#define MODULE_NAME "COMMS"
+#define COMMS_BUFFER_CAPACITY 		(10)
+#define MAX_RETRANSMIT_TRIES		(5)
 
 static comms_t comms;
-
 comms_packet_t temporary_packet;
 comms_packet_t previous_packet;
-
 uint8_t retries = 0;
 
 static comms_packet_t retransmit_packet = {
@@ -32,11 +29,14 @@ static comms_packet_t acknowledge_packet = {
 	.data = {0},
 	.crc = 0x15};
 
+static comms_packet_t give_up_packet = {
+    .identifier = 0,
+    .length = 1,
+    .data = {255},
+    .crc = 0xE6};
 
-
-// TODO: Find a way to test if the buffer is working correctly
 static void comms_buffer_write(comms_packet_t packet);
-uint8_t crc8(uint8_t *data, size_t len);
+static uint8_t crc8(uint8_t *data, size_t len);
 
 uint8_t is_ack_packet(comms_packet_t *packet)
 {
@@ -53,17 +53,6 @@ uint8_t is_give_up_packet(comms_packet_t *packet)
 	return (packet->identifier == 0 && packet->length == 1 && packet->data[0] == 255);
 }
 
-void comms_create_packet(comms_packet_t *packet, uint8_t packet_identifier, uint8_t data_length, uint8_t data[PACKET_DATA_MAX_LENGTH])
-{
-	packet->identifier = packet_identifier;
-	packet->length = data_length;
-	for (int i = 0; i < data_length; i++)
-	{
-		packet->data[i] = data[i];
-	}
-	packet->crc = crc8((uint8_t *)packet, (data_length + 2));
-}
-
 void comms_init(UART_HandleTypeDef *huart1)
 {
 	comms.huart = huart1;
@@ -78,7 +67,6 @@ void comms_init(UART_HandleTypeDef *huart1)
 	comms.buffer = rb;
 }
 
-// TODO: UART receive error handing
 void comms_state_machine()
 {
 	switch (comms.state)
@@ -111,35 +99,35 @@ void comms_state_machine()
 			uint8_t crc = crc8((uint8_t *)&temporary_packet, (temporary_packet.length + 2)); // Add 2 to the data length to accommodate the identifier byte and length byte
 			if (crc == temporary_packet.crc)
 			{
-				// packet valid
-				if (!is_ack_packet(&temporary_packet))
-				{ // if is not ack do something useful
-					if (is_ret_packet(&temporary_packet))
-					{
-						if (retries < 5)
-						{
-							comms_send_packet(&previous_packet);
-							retries = retries + 1;
-						}
-						else
-						{
-							comms_send_packet(&acknowledge_packet);
-							retries = 0;
-						}
-					}
+				// packet is valid
+				if(is_ack_packet(&temporary_packet)){
+					// Do nothing about an acknowledge packet
+					comms.state = COMMS_ID_STATE;
+					break;
 				}
-				else
-				{
-					// do nothing for now
+
+				if(is_ret_packet(&temporary_packet)){
+					comms_send_packet(&previous_packet);
+					comms.state = COMMS_ID_STATE;
+					break;
 				}
+				// add packet to the buffer for further processing
+				comms_buffer_write(temporary_packet);
+				comms_send_packet(&acknowledge_packet);
 			}
 			else
 			{
 				// packet invalid request a retransmit
-				comms_send_packet(&retransmit_packet);
+				if(retries < MAX_RETRANSMIT_TRIES){
+					comms_send_packet(&retransmit_packet);
+					retries++;
+				}else{
+					comms_send_packet(&give_up_packet);
+					retries = 0;
+				}
 			}
-			comms.state = COMMS_ID_STATE;
 		}
+		comms.state = COMMS_ID_STATE;
 		break;
 	default:
 		break;
@@ -163,6 +151,18 @@ void comms_send_packet(comms_packet_t *packet)
 		memcpy(&previous_packet, packet, sizeof(comms_packet_t));
 	}
 }
+
+void comms_create_packet(comms_packet_t *packet, uint8_t packet_identifier, uint8_t data_length, uint8_t data[PACKET_DATA_MAX_LENGTH])
+{
+	packet->identifier = packet_identifier;
+	packet->length = data_length;
+	for (int i = 0; i < data_length; i++)
+	{
+		packet->data[i] = data[i];
+	}
+	packet->crc = crc8((uint8_t *)packet, (data_length + 2));
+}
+
 
 // TODO: Find a better way of doing this or delete once the comms module is fully functional
 void console_log(char *message)
@@ -205,10 +205,6 @@ static void comms_buffer_write(comms_packet_t packet)
 	}
 	comms.buffer->buffer[comms.buffer->head] = packet;
 	comms.buffer->head = (comms.buffer->head + 1) % COMMS_BUFFER_CAPACITY;
-
-	// Not sure why you would request a packet that you sent me
-	// Update previous packet
-	// memcpy(&previous_packet, &temporary_packet, sizeof(comms_packet_t));
 }
 
 comms_packet_t comms_buffer_read()
@@ -222,7 +218,7 @@ comms_packet_t comms_buffer_read()
 
 	packet = comms.buffer->buffer[comms.buffer->tail];
 	comms.buffer->tail = (comms.buffer->tail + 1) % COMMS_BUFFER_CAPACITY;
-	comms.buffer->size++;
+	comms.buffer->size--;
 	return packet;
 }
 

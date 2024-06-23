@@ -60,14 +60,14 @@ void setup()
 
 void loop()
 {
-  // for (int i = 1; i < 4; i++)
-  //{
-  //   data[0] = i;
-  //   data[1] = i * packet.crc;
-  //   comms_create_packet(&packet, SENSOR_DATA_PACKET, 2, data);
-  //   comms_send_packet(&packet);
-  //   delay(1000);
-  // }
+   for (int i = 1; i < 4; i++)
+  {
+     data[0] = i;
+     data[1] = i * packet.crc;
+     comms_create_packet(&packet, SENSOR_DATA_PACKET, 2, data);
+     comms_send_packet(&packet);
+     vTaskDelay(1000);
+   }
 
   if (!comms_buffer_is_empty())
   {

@@ -10,14 +10,12 @@
 #include <string.h>
 
 #define COMMS_BUFFER_CAPACITY (10)
-
-#define MODULE_NAME "COMMS"
+#define MAX_RETRANSMIT_TRIES (5)
 
 static comms_t comms;
-uint8_t retries = 0;
-
 comms_packet_t temporary_packet;
 comms_packet_t previous_packet;
+uint8_t retries = 0;
 
 static comms_packet_t retransmit_packet = {
     .identifier = 0,
@@ -37,23 +35,8 @@ static comms_packet_t give_up_packet = {
     .data = {255},
     .crc = 0xE6};
 
-// TODO: Find a way to test if the buffer is working correctly
 static void comms_buffer_write(comms_packet_t packet);
-
-uint8_t crc8(uint8_t *data, size_t len);
-
-void comms_init()
-{
-    comms.state = COMMS_ID_STATE;
-
-    // Create comms buffer
-    comms_packet_buffer *rb = (comms_packet_buffer *)malloc(sizeof(comms_packet_buffer));
-    rb->buffer = (comms_packet_t *)malloc(COMMS_BUFFER_CAPACITY * sizeof(comms_packet_t));
-    rb->size = 0;
-    rb->head = 0;
-    rb->tail = 0;
-    comms.buffer = rb;
-}
+static uint8_t crc8(uint8_t *data, size_t len);
 
 uint8_t is_ack_packet(comms_packet_t *packet)
 {
@@ -68,6 +51,19 @@ uint8_t is_ret_packet(comms_packet_t *packet)
 uint8_t is_give_up_packet(comms_packet_t *packet)
 {
     return (packet->identifier == 0 && packet->length == 1 && packet->data[0] == 255);
+}
+
+void comms_init()
+{
+    comms.state = COMMS_ID_STATE;
+
+    // Create comms buffer
+    comms_packet_buffer *rb = (comms_packet_buffer *)malloc(sizeof(comms_packet_buffer));
+    rb->buffer = (comms_packet_t *)malloc(COMMS_BUFFER_CAPACITY * sizeof(comms_packet_t));
+    rb->size = 0;
+    rb->head = 0;
+    rb->tail = 0;
+    comms.buffer = rb;
 }
 
 // TODO: UART receive error handing
@@ -111,41 +107,38 @@ void comms_state_machine()
             if (crc == temporary_packet.crc)
             {
                 // packet valid
-                Serial.println("Packet is valid");
-                if (is_ret_packet(&temporary_packet))
-                {
-                    if (retries < 5)
-                    {
-                        comms_send_packet(&previous_packet);
-                        retries = retries + 1;
-                    }
-                    else
-                    {
-                        comms_send_packet(&give_up_packet);
-                        retries = 0;
-                    }
-                    comms.state = COMMS_ID_STATE;
-                    break;
-                }
-
                 if (is_ack_packet(&temporary_packet))
                 {
+                    // Do nothing about an acknowledge packet
                     comms.state = COMMS_ID_STATE;
                     break;
                 }
 
+				if(is_ret_packet(&temporary_packet)){
+                    comms_send_packet(&previous_packet);
+					comms.state = COMMS_ID_STATE;
+					break;
+				}
+                // add packet to the buffer for further processing
                 comms_buffer_write(temporary_packet);
                 comms_send_packet(&acknowledge_packet);
-                comms.state = COMMS_ID_STATE;
-                break;
             }
             else
             {
                 // packet invalid request a retransmit
-                comms_send_packet(&retransmit_packet);
+                if (retries < MAX_RETRANSMIT_TRIES)
+                {
+                    comms_send_packet(&retransmit_packet);
+                    retries++;
+                }
+                else
+                {
+                    comms_send_packet(&give_up_packet);
+                    retries = 0;
+                }
             }
-            comms.state = COMMS_ID_STATE;
         }
+        comms.state = COMMS_ID_STATE;
         break;
 
     default:
@@ -222,9 +215,6 @@ static void comms_buffer_write(comms_packet_t packet)
     }
     comms.buffer->buffer[comms.buffer->head] = packet;
     comms.buffer->head = (comms.buffer->head + 1) % COMMS_BUFFER_CAPACITY;
-
-    // Update previous packet
-    memcpy(&previous_packet, &temporary_packet, sizeof(comms_packet_t));
 }
 
 comms_packet_t comms_buffer_read()
