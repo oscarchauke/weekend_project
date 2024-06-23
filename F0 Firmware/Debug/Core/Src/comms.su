@@ -1,0 +1,10 @@
+../Core/Src/comms.c:35:9:is_ack_packet	16	static
+../Core/Src/comms.c:55:6:comms_init	24	static
+../Core/Src/comms.c:69:6:comms_state_machine	48	static
+../Core/Src/comms.c:112:6:comms_send_packet	32	static
+../Core/Src/comms.c:123:6:console_log	72	static
+../Core/Src/comms.c:145:13:comms_buffer_write	16	static
+../Core/Src/comms.c:159:16:comms_buffer_read	64	static
+../Core/Src/comms.c:172:9:comms_buffer_is_full	8	static
+../Core/Src/comms.c:176:9:comms_buffer_is_empty	8	static
+../Core/Src/comms.c:180:9:crc8	32	static
