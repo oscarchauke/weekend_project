@@ -12,59 +12,40 @@
 #define COMMS_BUFFER_CAPACITY 		(10)
 #define MAX_RETRANSMIT_TRIES		(5)
 
+
+// Static packet definitions
+static const comms_packet_t retransmit_packet = {.identifier = 0, .length = 1, .data = {1}, .crc = 0x12};
+static const comms_packet_t acknowledge_packet = {.identifier = 0, .length = 1, .data = {0}, .crc = 0x15};
+static const comms_packet_t give_up_packet = {.identifier = 0, .length = 1, .data = {255}, .crc = 0xE6};
+
+// Global variables
 static comms_t comms;
-comms_packet_t temporary_packet;
-comms_packet_t previous_packet;
-uint8_t retries = 0;
+static comms_packet_t temporary_packet;
+static comms_packet_t previous_packet;
+static uint8_t retries = 0;
 
-static comms_packet_t retransmit_packet = {
-	.identifier = 0,
-	.length = 1,
-	.data = {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-	.crc = 0x12};
-
-static comms_packet_t acknowledge_packet = {
-	.identifier = 0,
-	.length = 1,
-	.data = {0},
-	.crc = 0x15};
-
-static comms_packet_t give_up_packet = {
-    .identifier = 0,
-    .length = 1,
-    .data = {255},
-    .crc = 0xE6};
-
-static void comms_buffer_write(comms_packet_t packet);
+static void comms_buffer_write(const comms_packet_t packet);
+static uint8_t is_ack_packet(const comms_packet_t *packet);
+static uint8_t is_ret_packet(const comms_packet_t *packet);
+static uint8_t is_give_up_packet(const comms_packet_t *packet);
 static uint8_t crc8(uint8_t *data, size_t len);
 
-uint8_t is_ack_packet(comms_packet_t *packet)
-{
-	return (packet->identifier == 0 && packet->length == 1 && packet->data[0] == 0);
-}
-
-uint8_t is_ret_packet(comms_packet_t *packet)
-{
-	return (packet->identifier == 0 && packet->length == 1 && packet->data[0] == 1);
-}
-
-uint8_t is_give_up_packet(comms_packet_t *packet)
-{
-	return (packet->identifier == 0 && packet->length == 1 && packet->data[0] == 255);
-}
 
 void comms_init(UART_HandleTypeDef *huart1)
 {
 	comms.huart = huart1;
 	comms.state = COMMS_ID_STATE;
 
-	// Create comms buffer
-	comms_packet_buffer *rb = (comms_packet_buffer *)malloc(sizeof(comms_packet_buffer));
-	rb->buffer = (comms_packet_t *)malloc(COMMS_BUFFER_CAPACITY * sizeof(comms_packet_t));
-	rb->size = 0;
-	rb->head = 0;
-	rb->tail = 0;
-	comms.buffer = rb;
+    // Create comms buffer
+    static comms_packet_t buffer_array[COMMS_BUFFER_CAPACITY]; // Static allocation
+    comms.buffer = (comms_packet_buffer *)malloc(sizeof(comms_packet_buffer));
+    if (comms.buffer == NULL) {
+        // TODO: Handle allocation failure
+    }
+    comms.buffer->buffer = buffer_array;
+    comms.buffer->size = 0;
+    comms.buffer->head = 0;
+    comms.buffer->tail = 0;
 }
 
 void comms_state_machine()
@@ -111,6 +92,10 @@ void comms_state_machine()
 					comms.state = COMMS_ID_STATE;
 					break;
 				}
+
+				if(is_give_up_packet(&temporary_packet)){
+					//TODO: Handle give up packet
+				}
 				// add packet to the buffer for further processing
 				comms_buffer_write(temporary_packet);
 				comms_send_packet(&acknowledge_packet);
@@ -134,7 +119,7 @@ void comms_state_machine()
 	}
 }
 
-void comms_send_packet(comms_packet_t *packet)
+void comms_send_packet(const comms_packet_t *packet)
 {
 	uint8_t i;
 	HAL_UART_Transmit(comms.huart, &(packet->identifier), 1, 100);
@@ -192,7 +177,7 @@ void console_log(char *message)
 	}
 }
 
-static void comms_buffer_write(comms_packet_t packet)
+static void comms_buffer_write(const comms_packet_t packet)
 {
 	if (comms.buffer->size == COMMS_BUFFER_CAPACITY)
 	{
@@ -232,7 +217,22 @@ uint8_t comms_buffer_is_empty()
 	return comms.buffer->size == 0;
 }
 
-uint8_t crc8(uint8_t *data, size_t len)
+static uint8_t is_ack_packet(const comms_packet_t *packet)
+{
+	return (packet->identifier == 0 && packet->length == 1 && packet->data[0] == 0);
+}
+
+static uint8_t is_ret_packet(const comms_packet_t *packet)
+{
+	return (packet->identifier == 0 && packet->length == 1 && packet->data[0] == 1);
+}
+
+static uint8_t is_give_up_packet(const comms_packet_t *packet)
+{
+	return (packet->identifier == 0 && packet->length == 1 && packet->data[0] == 255);
+}
+
+static uint8_t crc8(uint8_t *data, size_t len)
 {
 	uint8_t crc = 0x00;
 	size_t i, j;
